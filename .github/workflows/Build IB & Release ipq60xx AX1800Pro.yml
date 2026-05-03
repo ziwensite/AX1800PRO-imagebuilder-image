@@ -2,6 +2,15 @@ name: Build IB & Release ipq60xx AX1800Pro
 
 on:
   workflow_dispatch:
+    inputs:
+      REPO_BRANCH:
+        description: 'LiBwrt/openwrt-6.x'
+        required: true
+        default: 'main-nss'
+        type: choice
+        options:
+          - 'main-nss'
+          - '25.12-nss'
 
 permissions:
   contents: write
@@ -14,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: LiBwrt/openwrt-6.x
-          ref: main
+          ref: ${{ github.event.inputs.REPO_BRANCH }}
           fetch-depth: 1
 
       - name: 安装编译依赖
@@ -34,7 +43,7 @@ jobs:
           cat > .config << EOF
           CONFIG_TARGET_qualcommax=y
           CONFIG_TARGET_qualcommax_ipq60xx=y
-          CONFIG_TARGET_qualcommax_ipq60xx_Device_jdcloud_ax1800-pro=y
+          CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y
           CONFIG_IB=y
           CONFIG_BUILD_IB=y
           CONFIG_ALL_KMODS=y
