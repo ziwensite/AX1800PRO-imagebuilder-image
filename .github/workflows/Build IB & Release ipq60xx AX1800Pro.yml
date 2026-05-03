@@ -38,17 +38,25 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 写入固定配置 ipq60xx + 开启 ImageBuilder
+      - name: 清理警告相关无用包
+        run: |
+          rm -rf package/feeds/packages/jool
+          rm -rf package/feeds/packages/openvswitch
+          rm -rf package/feeds/luci/luci-app-mjpg-streamer
+          rm -rf package/feeds/packages/onionshare-cli
+
+      - name: 写入配置 ipq60xx + jdcloud_re-ss-01 + ImageBuilder
         run: |
           cat > .config << EOF
           CONFIG_TARGET_qualcommax=y
           CONFIG_TARGET_qualcommax_ipq60xx=y
-          CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y
+          CONFIG_TARGET_qualcommax_ipq60xx_Device_jdcloud_re-ss-01=y
           CONFIG_IB=y
           CONFIG_BUILD_IB=y
           CONFIG_ALL_KMODS=y
           CONFIG_DEVEL=y
           CONFIG_CCACHE=y
+          CONFIG_PACKAGE_kmod-nf-conntrack6=n
           EOF
 
       - name: 下载编译依赖
@@ -66,8 +74,8 @@ jobs:
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ipq60xx-ib-${{ github.sha }}
-          name: LiBwrt 6.x ipq60xx AX1800Pro ImageBuilder
+          tag_name: ipq60xx-re-ss-01-${{ github.sha }}
+          name: LiBwrt 6.x ipq60xx jdcloud_re-ss-01 ImageBuilder
           files: |
             release/*.tar.xz
             release/*.bin
