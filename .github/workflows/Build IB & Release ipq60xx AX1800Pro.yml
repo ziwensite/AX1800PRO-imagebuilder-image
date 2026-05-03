@@ -38,14 +38,16 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 清理警告相关无用包
+      - name: 清理所有警告包（彻底干净）
         run: |
           rm -rf package/feeds/packages/jool
           rm -rf package/feeds/packages/openvswitch
+          rm -rf package/feeds/packages/ovn
+          rm -rf package/feeds/packages/ovsd
           rm -rf package/feeds/luci/luci-app-mjpg-streamer
           rm -rf package/feeds/packages/onionshare-cli
 
-      - name: 写入配置 ipq60xx + jdcloud_re-ss-01 + ImageBuilder
+      - name: 写入完整配置（无 menuconfig）
         run: |
           cat > .config << EOF
           CONFIG_TARGET_qualcommax=y
@@ -59,10 +61,13 @@ jobs:
           CONFIG_PACKAGE_kmod-nf-conntrack6=n
           EOF
 
+      - name: 确保配置生效
+        run: make defconfig
+
       - name: 下载编译依赖
         run: make download -j$(nproc)
 
-      - name: 编译固件 + ImageBuilder
+      - name: 编译 ImageBuilder + 固件
         run: make -j$(nproc) V=s
 
       - name: 整理产物
