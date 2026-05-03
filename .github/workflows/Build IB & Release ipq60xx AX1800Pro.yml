@@ -1,10 +1,10 @@
-name: Build IB & Release ipq60xx AX1800Pro
+name: Build IB Only ipq60xx AX1800Pro
 
 on:
   workflow_dispatch:
     inputs:
       REPO_BRANCH:
-        description: 'LiBwrt/openwrt-6.x'
+        description: 'LiBwrt/openwrt-6.x 分支'
         required: true
         default: 'main-nss'
         type: choice
@@ -12,77 +12,134 @@ on:
           - 'main-nss'
           - '25.12-nss'
 
+env:
+  REPO_URL: https://github.com/LiBwrt/openwrt-6.x.git
+  FIRMWARE_TAG: ipq60xx-IB
+  CONFIG_FILE: configs/IPQ60XX.config
+  GENERAL_CONFIG_FILE: configs/General.config
+  DIY_SCRIPT: scripts/Roc-script.sh
+  CLASH_KERNEL: amd64
+  FIRMWARE_TAG: IPQ60XX
+  TZ: Asia/Shanghai
+
 permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
+  Build:
+    runs-on: ubuntu-24.04
+
     steps:
-      - name: 拉取 LiBwrt openwrt-6.x 源码
-        uses: actions/checkout@v4
-        with:
-          repository: LiBwrt/openwrt-6.x
-          ref: ${{ github.event.inputs.REPO_BRANCH }}
-          fetch-depth: 1
+    - name: 检查服务器性能
+      run: |
+        echo "--------------------------CPU信息--------------------------"
+        echo "CPU物理核心：$(nproc)"
+        echo -e "CPU型号：$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq) \n"
+        echo "--------------------------硬盘内存信息--------------------------"
+        df -hT
+        free -h
 
-      - name: 安装编译依赖
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential libncurses-dev zlib1g-dev \
-          gawk git gettext libssl-dev xsltproc wget unzip python3 \
-          rsync flex bison libelf-dev dwarves
+    - name: 初始化编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo -E apt-get -y update
+        sudo -E apt-get -y install build-essential libncurses-dev zlib1g-dev \
+        gawk git gettext libssl-dev xsltproc wget unzip python3 \
+        rsync flex bison libelf-dev dwarves
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /mnt/openwrt
+        sudo chown -R $(id -u):$(id -g) /mnt/openwrt
 
-      - name: 更新 feeds
-        run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+    - name: 克隆源码
+      run: |
+        git clone --depth 1 -b ${{ github.event.inputs.REPO_BRANCH }} --single-branch \
+        $REPO_URL /mnt/openwrt
+        cd /mnt/openwrt
+        echo "OPENWRT_PATH=$PWD" >> $GITHUB_ENV
+        echo "HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
 
-      - name: 清理所有警告包（彻底干净）
-        run: |
-          rm -rf package/feeds/packages/jool
-          rm -rf package/feeds/packages/openvswitch
-          rm -rf package/feeds/packages/ovn
-          rm -rf package/feeds/packages/ovsd
-          rm -rf package/feeds/luci/luci-app-mjpg-streamer
-          rm -rf package/feeds/packages/onionshare-cli
+    - name: 生成编译变量
+      run: |
+        cd $OPENWRT_PATH
+        make defconfig > /dev/null 2>&1
+        SOURCE_REPO="$(echo $REPO_URL | awk -F '/' '{print $(NF)}')"
+        echo "SOURCE_REPO=$SOURCE_REPO" >> $GITHUB_ENV
+        DEVICE_TARGET=$(cat .config | grep CONFIG_TARGET_BOARD | awk -F '"' '{print $2}')
+        echo "DEVICE_TARGET=$DEVICE_TARGET" >> $GITHUB_ENV
+        DEVICE_SUBTARGET=$(cat .config | grep CONFIG_TARGET_SUBTARGET | awk -F '"' '{print $2}')
+        echo "DEVICE_SUBTARGET=$DEVICE_SUBTARGET" >> $GITHUB_ENV
+        echo "CACHE_DATE=$(date +"%Y-%m-%d")" >> $GITHUB_ENV
 
-      - name: 写入完整配置（无 menuconfig）
-        run: |
-          cat > .config << EOF
-          CONFIG_TARGET_qualcommax=y
-          CONFIG_TARGET_qualcommax_ipq60xx=y
-          CONFIG_TARGET_qualcommax_ipq60xx_Device_jdcloud_re-ss-01=y
-          CONFIG_IB=y
-          CONFIG_BUILD_IB=y
-          CONFIG_ALL_KMODS=y
-          CONFIG_DEVEL=y
-          CONFIG_CCACHE=y
-          CONFIG_PACKAGE_kmod-nf-conntrack6=n
-          EOF
+    - name: 缓存工具链 & ccache
+      uses: actions/cache@main
+      with:
+        key: ${{ env.SOURCE_REPO }}-${{ github.event.inputs.REPO_BRANCH }}-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}-${{ env.CACHE_DATE }}
+        restore-keys: ${{ env.SOURCE_REPO }}-${{ github.event.inputs.REPO_BRANCH }}-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}-
+        path: |
+          ${{ env.OPENWRT_PATH }}/.ccache
+          ${{ env.OPENWRT_PATH }}/staging_dir
 
-      - name: 确保配置生效
-        run: make defconfig
+    - name: 更新安装 Feeds
+      run: |
+        cd $OPENWRT_PATH
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-      - name: 下载编译依赖
-        run: make download -j$(nproc)
+    - name: 清理冲突警告包
+      run: |
+        cd $OPENWRT_PATH
+        rm -rf package/feeds/packages/jool
+        rm -rf package/feeds/packages/openvswitch
+        rm -rf package/feeds/packages/ovn
+        rm -rf package/feeds/packages/ovsd
+        rm -rf package/feeds/luci/luci-app-mjpg-streamer
+        rm -rf package/feeds/packages/onionshare-cli
 
-      - name: 编译 ImageBuilder + 固件
-        run: make -j$(nproc) V=s
+    - name: 写入正常配置 仅开启IB(不手动精简其他项)
+      run: |
+        cd $OPENWRT_PATH
+        cat > .config << EOF
+        CONFIG_TARGET_qualcommax=y
+        CONFIG_TARGET_qualcommax_ipq60xx=y
+        CONFIG_TARGET_qualcommax_ipq60xx_Device_jdcloud_re-ss-01=y
+        CONFIG_IB=y
+        CONFIG_BUILD_IB=y
+        CONFIG_BUILDBOT=y
+        EOF
+        make defconfig
 
-      - name: 整理产物
-        run: |
-          mkdir -p release
-          cp bin/targets/qualcommax/ipq60xx/openwrt-imagebuilder-*.tar.xz release/
-          cp bin/targets/qualcommax/ipq60xx/*.bin release/
+    - name: 下载编译依赖
+      run: |
+        cd $OPENWRT_PATH
+        make download -j$(nproc)
 
-      - name: 发布到 GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ipq60xx-re-ss-01-${{ github.sha }}
-          name: LiBwrt 6.x ipq60xx jdcloud_re-ss-01 ImageBuilder
-          files: |
-            release/*.tar.xz
-            release/*.bin
-          draft: false
-          prerelease: false
+    - name: 编译 ImageBuilder
+      id: compile
+      run: |
+        cd $OPENWRT_PATH
+        make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "FILE_DATE=$(date +"%Y.%m.%d")" >> $GITHUB_ENV
+
+    - name: 检查编译后空间占用
+      if: (!cancelled())
+      run: df -hT
+
+    - name: 整理仅IB产物
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        cd $OPENWRT_PATH/bin/targets/qualcommax/ipq60xx
+        mkdir -p release
+        # 只复制IB压缩包，不复制任何bin固件
+        cp openwrt-imagebuilder-*.tar.xz release/
+        echo "FIRMWARE_PATH=$PWD/release" >> $GITHUB_ENV
+
+    - name: 发布到 GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ env.FIRMWARE_TAG }}-${{ env.FILE_DATE }}-${{ env.HASH }}
+        name: LiBwrt 6.x ipq60xx RE-SS-01 官方正常配置 ImageBuilder
+        files: ${{ env.FIRMWARE_PATH }}/*
+        draft: false
+        prerelease: false
