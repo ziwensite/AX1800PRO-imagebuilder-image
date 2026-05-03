@@ -1,0 +1,66 @@
+name: Build IB & Release ipq60xx AX1800Pro
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 拉取 LiBwrt openwrt-6.x 源码
+        uses: actions/checkout@v4
+        with:
+          repository: LiBwrt/openwrt-6.x
+          ref: main
+          fetch-depth: 1
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev zlib1g-dev \
+          gawk git gettext libssl-dev xsltproc wget unzip python3 \
+          rsync flex bison libelf-dev dwarves
+
+      - name: 更新 feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 写入固定配置 ipq60xx + 开启 ImageBuilder
+        run: |
+          cat > .config << EOF
+          CONFIG_TARGET_qualcommax=y
+          CONFIG_TARGET_qualcommax_ipq60xx=y
+          CONFIG_TARGET_qualcommax_ipq60xx_Device_jdcloud_ax1800-pro=y
+          CONFIG_IB=y
+          CONFIG_BUILD_IB=y
+          CONFIG_ALL_KMODS=y
+          CONFIG_DEVEL=y
+          CONFIG_CCACHE=y
+          EOF
+
+      - name: 下载编译依赖
+        run: make download -j$(nproc)
+
+      - name: 编译固件 + ImageBuilder
+        run: make -j$(nproc) V=s
+
+      - name: 整理产物
+        run: |
+          mkdir -p release
+          cp bin/targets/qualcommax/ipq60xx/openwrt-imagebuilder-*.tar.xz release/
+          cp bin/targets/qualcommax/ipq60xx/*.bin release/
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ipq60xx-ib-${{ github.sha }}
+          name: LiBwrt 6.x ipq60xx AX1800Pro ImageBuilder
+          files: |
+            release/*.tar.xz
+            release/*.bin
+          draft: false
+          prerelease: false
