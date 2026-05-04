@@ -70,6 +70,13 @@ jobs:
         echo "DEVICE_SUBTARGET=$DEVICE_SUBTARGET" >> $GITHUB_ENV
         echo "CACHE_DATE=$(date +"%Y-%m-%d")" >> $GITHUB_ENV
 
+    - name: 清理 runner 释放磁盘空间
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo docker image prune -af
+        sudo rm -rf /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+        df -hT
+
     - name: 缓存工具链 & ccache
       uses: actions/cache@main
       with:
@@ -77,7 +84,6 @@ jobs:
         restore-keys: ${{ env.SOURCE_REPO }}-${{ github.event.inputs.REPO_BRANCH }}-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}-
         path: |
           ${{ env.OPENWRT_PATH }}/.ccache
-          ${{ env.OPENWRT_PATH }}/staging_dir
 
     - name: 更新安装 Feeds
       run: |
@@ -120,6 +126,19 @@ jobs:
         make -j$(nproc) || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         echo "FILE_DATE=$(date +"%Y.%m.%d")" >> $GITHUB_ENV
+
+    - name: 清理编译中间文件释放空间
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        cd $OPENWRT_PATH
+        echo "清理前:"
+        df -hT .
+        rm -rf build_dir/ target/
+        rm -rf staging_dir/toolchain-*
+        rm -rf dl/
+        du -sh .
+        echo "清理后:"
+        df -hT .
 
     - name: 检查编译后空间占用
       if: (!cancelled())
